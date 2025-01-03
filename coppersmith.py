@@ -16,7 +16,7 @@ flatter_path = shutil.which('flatter')
 
 def flatter(M, flatter_path=flatter_path):
     inp_str = '[' + '\n'.join('[' + ' '.join(map(str, row)) + ']' for row in M) + ']'
-    out_str = subprocess.check_output([flatter_path, '-of', 'b'], input=inp_str.encode())
+    out_str = subprocess.check_output([flatter_path], input=inp_str.encode())
     return matrix(ZZ, M.nrows(), M.ncols(), map(ZZ, re.findall(r'-?\d+', out_str.decode())))
 
 
