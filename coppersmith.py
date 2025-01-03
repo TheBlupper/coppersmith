@@ -9,7 +9,6 @@ from sage.misc.verbose import verbose
 from warnings import warn
 from collections import defaultdict
 from subprocess import CalledProcessError
-from collections import deque
 
 
 flatter_path = shutil.which('flatter')
@@ -57,7 +56,7 @@ def suitable_subset(MS, var_sizes):
     nmonos = len(MS)
 
     off = sum(map(poly_weight, S)) / len(S)
-    vert_weights = [off - poly_weight(f) for f in S]
+    vert_weights = [off - poly_weight(g) for g in S]
 
     # Reduce maximum-closure to maximum-cut like described in
     # https://en.wikipedia.org/wiki/Closure_problem#Reduction_to_maximum_flow
@@ -75,23 +74,9 @@ def suitable_subset(MS, var_sizes):
                 continue
             i2 = M_idx[m2]
             G.add_edge(i1, i2, Infinity)
-
-    cut = {
-        (a, b)
-        for a, b, _ in G.edge_cut(nmonos, nmonos+1, value_only=False, use_edge_labels=True)[1]
-    }
-
-    # we now recover the side of the graph connected to s
-    # without crossing the cut
-    closure = {nmonos}
-    curr = deque([nmonos])
-    while curr:
-        i = curr.popleft()
-        for j in G.neighbors_out(i):
-            if j in closure: continue
-            if (i, j) in cut: continue
-            closure.add(j)
-            curr.append(j)
+    
+    parts = G.edge_cut(nmonos, nmonos+1, value_only=False, use_edge_labels=True, vertices=True)[2]
+    closure = set(next(c for c in parts if nmonos in c))
     closure -= {nmonos, nmonos+1}
 
     if sum(vert_weights[i] for i in closure) == 0:
@@ -211,7 +196,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
     L = lat_reduce(L.dense_matrix())
 
     try:
-        poly_end_idx = max(i for i, r in enumerate(L) if r.norm(1) < 2**mod_sz)
+        poly_end_idx = max(i+1 for i, r in enumerate(L) if r.norm(1) < 2**mod_sz)
     except ValueError:
         poly_end_idx = 1
 
@@ -220,7 +205,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
         L.rescale_col(i, QQ(2) ** -w)
 
     out_polys = list(L * monos)
-    while 0 < poly_end_idx < len(out_polys):
+    while 0 < poly_end_idx < len(out_polys)+1:
         sol_polys = out_polys[:poly_end_idx]
         part_var_names = list(
             set().union(*({str(x) for x in p.variables()} for p in sol_polys))
@@ -250,5 +235,5 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
     # in the final equations (combine with initial equations?)
     return [
         KeyConvertingDict(str, {str(k): ZZ(v) for k, v in sol.items()})
-        for sol in I.variety()
+        for sol in I.variety() if all(sol.is_integer() for sol in sol.values())
     ]
