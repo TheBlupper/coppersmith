@@ -30,7 +30,7 @@ def BKZ(M, **kwargs):
 
 
 def lg2(n):
-    return ZZ(n - 1).nbits()
+    return ZZ(abs(n) - 1).nbits()
 
 
 def optimal_shift_polys(J, M):
