@@ -59,7 +59,7 @@ def suitable_subset(MS, var_sizes):
     off = sum(map(poly_weight, S)) / len(S)
     vert_weights = [off - poly_weight(f) for f in S]
 
-    # Reduce maximum-closre to maximum-cut like described in
+    # Reduce maximum-closure to maximum-cut like described in
     # https://en.wikipedia.org/wiki/Closure_problem#Reduction_to_maximum_flow
     for f in S:
         m1 = f.lm()
