@@ -1,15 +1,15 @@
 import shutil
 import subprocess
 import re
+import logging
 
 from sage.misc.converting_dict import KeyConvertingDict
 from sage.all import matrix, ZZ, DiGraph, Infinity, prod, Sequence, PolynomialRing, TermOrder, QQ
 
-from warnings import warn
+from functools import lru_cache
 from collections import defaultdict
 from subprocess import CalledProcessError
 
-import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(uptime)f [%(levelname)s]: %(message)s')
@@ -21,6 +21,10 @@ def record_factory(*args, **kwargs):
     return record
 logging.setLogRecordFactory(record_factory)
 
+@lru_cache(None)
+def warn_once(logger, msg):
+    logger.warning(msg)
+
 
 flatter_path = shutil.which('flatter')
 
@@ -29,7 +33,7 @@ try:
     QQ['x,y'].ideal([1]).groebner_basis(algorithm='msolve', proof=False)
     msolve_available = True
 except CalledProcessError:
-    warn('msolve not found by Sage, equation solving will likely be slower')
+    logger.warning('msolve not found by Sage, equation solving will likely be slower')
     msolve_available = False
 
 
@@ -102,7 +106,7 @@ def suitable_subset(MS, var_sizes):
     off = sum(map(poly_weight, S)) / len(S)
     vert_weights = [off - poly_weight(g) for g in S]
 
-    # Reduce maximum-closure to maximum-cut like described in
+    # Reduce maximum-closure to minimum-cut like described in
     # https://en.wikipedia.org/wiki/Closure_problem#Reduction_to_maximum_flow
     for f in S:
         m1 = f.lm()
@@ -215,9 +219,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
     ]
 
     G = groebner_ZZ(J)
-    MSbig = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(G, Mbig))]
-
-    MSheur = MSbig
+    MSheur = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(G, Mbig))]
 
     if graph_search:
         pre_sz = len(MSheur)
@@ -238,7 +240,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
 
     if lat_reduce is None:
         if flatter_path is None:
-            warn('flatter not found, lattice reduction will be slower')
+            warn_once('flatter not found, lattice reduction will be slower')
             lat_reduce = LLL
         else:
             lat_reduce = flatter
@@ -259,7 +261,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         L.rescale_col(i, QQ(2) ** -w)
 
     out_polys = list(L * monos)
-    out_polys = [f if not f.is_constant() else f.parent()(0) for f in out_polys]
+    out_polys = [f for f in out_polys if not f.is_constant()]
     while 0 < poly_end_idx <= len(out_polys):
         sol_polys = out_polys[:poly_end_idx]
         logger.info(f'solving with the first {poly_end_idx} polynomials...')
@@ -279,7 +281,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
 
     rem_var_names = set(var_names) - set(part_var_names)
     if len(rem_var_names) > 0:
-        warn(
+        warn_once(logger,
             f"Variables {rem_var_names} not recovered, "
             "try substituting the result back into the original equations"
         )
