@@ -38,7 +38,7 @@ def optimal_shift_polys(J, M):
     for m in M:
         g = min((g for g in G if g.lm().divides(m)), key=lambda g: g.lc(), default=None)
         if g is None:
-            raise ValueError('Funky ideal, I give up')
+            raise ValueError('ideal behaves unexpectedly, please report this')
         h = g * (m // g.lm())
         hprim = h.lt() + (h - h.lt()).reduce(G)
         S.append(hprim)
@@ -196,7 +196,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
             lat_reduce = flatter
 
     if L.nrows() < 2:
-        raise ValueError('Lattice got too small :((')
+        raise ValueError('lattice got too small, try disabling graph search')
 
     verbose(f"reducing {L.nrows()}x{L.ncols()} matrix...")
     L = lat_reduce(L.dense_matrix())
@@ -211,7 +211,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         L.rescale_col(i, QQ(2) ** -w)
 
     out_polys = list(L * monos)
-    while 0 < poly_end_idx < len(out_polys)+1:
+    while 0 < poly_end_idx <= len(out_polys):
         sol_polys = out_polys[:poly_end_idx]
         part_var_names = list(
             set().union(*({str(x) for x in p.variables()} for p in sol_polys))
