@@ -154,7 +154,7 @@ def find_exps(assignemnt, remaining, weights):
         yield from find_exps(assignemnt + (j,), new_remaining, weights)
 
 
-def small_polys(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True, ret_start_hint=False):
+def small_polys(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search_lim=None, ret_start_hint=False):
     '''
     Given a list of polynomials, possible over different rings, finds
     small solutions to the system of equations. The polynomials may be defined
@@ -232,12 +232,14 @@ def small_polys(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
 
     X = [2**sz for sz in var_sizes]
 
-    if graph_search:
-        pre_sz = len(MSheur)
+    if graph_search_lim is None or graph_search_lim > 0:
         logger.info(f"finding suitable subset using graph search...")
+        it = 0
         while (cand := suitable_subset(MSheur, X)) is not None:
+            if it == graph_search_lim: break
+            logger.info(f'reduced {len(MSheur)} -> {len(cand)} monomials')
             MSheur = cand
-        logger.info(f'went from {pre_sz} -> {len(MSheur)} monomials')
+            it += 1
 
     Ssub = [s for _, s in MSheur]
 
@@ -271,11 +273,11 @@ def small_polys(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
     return res
 
 
-def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True, algorithm='groebner'):
+def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search_lim=None, algorithm='groebner'):
     '''
-    See docstring of `small_polys`
+    See docstring of `small_polys` for an explanation of the arguments
     '''
-    out_polys, start_hint = small_polys(inp_polys, sizes, ks, mod_bounds, lat_reduce, graph_search, ret_start_hint=True)
+    out_polys, start_hint = small_polys(inp_polys, sizes, ks, mod_bounds, lat_reduce, graph_search_lim, ret_start_hint=True)
     logger.info('found small polys, solving for roots...')
 
     if algorithm == 'groebner':
