@@ -285,7 +285,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
 
 # TODO: add more rootfinding algorithms
 
-def rootfind_groebner(polys, ring, start_hint=None):
+def rootfind_groebner(polys, start_hint=None):
     seen_params = set()
 
     if start_hint is not None:
@@ -324,6 +324,6 @@ def rootfind_groebner(polys, ring, start_hint=None):
         if I.dimension() == 0:
             return variety_ZZ(I)
         if I.dimension() == -1:
-            param.pop()
+            param = param[:-1]
             sol_polys.pop()
     return []
