@@ -51,7 +51,7 @@ def groebner_ZZ(I):
 def groebner_QQ(I):
     '''
     Return a new ideal with either the Gröbner basis of I
-    as generators or return I with a cached computed Gröbner basis
+    as generators
     '''
     if msolve_available:
         gb = I.groebner_basis(algorithm='msolve', proof=False)
@@ -60,13 +60,18 @@ def groebner_QQ(I):
     return I.parent()(gb)
 
 
-def variety_QQ(I):
+def variety_ZZ(I):
     '''
     Return the variety of I
     '''
     if msolve_available:
-        return I.variety(algorithm='msolve', proof=False)
-    return I.variety()
+        vari = I.variety(algorithm='msolve', proof=False)
+    else:
+        vari = I.variety()
+    return [
+        KeyConvertingDict(str, {str(k): ZZ(v) for k, v in sol.items()})
+        for sol in vari if all(sol.is_integer() for sol in sol.values())
+    ]
 
 
 def LLL(M, **kwargs):
@@ -81,6 +86,11 @@ def lg2(n):
     return ZZ(abs(n) - 1).nbits()
 
 
+def common_ZZ_ring(polys):
+    var_names = set().union(*({str(x) for x in p.variables()} for p in polys))
+    return PolynomialRing(ZZ, len(var_names), tuple(var_names))
+
+
 def optimal_shift_polys(G, M):
     S = []
     for m in M:
@@ -93,18 +103,16 @@ def optimal_shift_polys(G, M):
     return S
 
 
-def suitable_subset(MS, var_sizes):
+def suitable_subset(MS, X):
     G = DiGraph(len(MS) + 2, weighted=True)
-
-    mono_weight = lambda m: sum(a*b for a, b in zip(m.exponents()[0], var_sizes))
-    poly_weight = lambda t: lg2(t.lc()) + mono_weight(t.lm())
 
     S = [s for _, s in MS]
     M_idx = {m: i for i, (m, _) in enumerate(MS)}
     nmonos = len(MS)
 
-    off = sum(map(poly_weight, S)) / len(S)
-    vert_weights = [off - poly_weight(g) for g in S]
+    poly_weights = [ZZ(lg2(f.lt()(X))) for f in S]
+    off = sum(poly_weights) / len(S)
+    vert_weights = [off - w for w in poly_weights]
 
     # Reduce maximum-closure to minimum-cut like described in
     # https://en.wikipedia.org/wiki/Closure_problem#Reduction_to_maximum_flow
@@ -146,7 +154,7 @@ def find_exps(assignemnt, remaining, weights):
         yield from find_exps(assignemnt + (j,), new_remaining, weights)
 
 
-def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True):
+def small_polys(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True, ret_start_hint=False):
     '''
     Given a list of polynomials, possible over different rings, finds
     small solutions to the system of equations. The polynomials may be defined
@@ -163,7 +171,9 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
             modulo (in no. bits)
         lat_reduce: function to reduce the lattice, defaults to flatter if
             installed otherwise fplll's LLL
-        greap_search: Whether to perform the graph search to find dense sublattices
+        graph_search: Whether to perform the graph search to find dense sublattices
+        ret_start_hint: Whether to also return the index at which the resulting polynomials
+            get larger than the modulus
 
     Returns:
         list of solutions, each a dict mapping variable names to their values
@@ -173,19 +183,15 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
     if mod_bounds is None:
         mod_bounds = {}
     sizes = {str(n): b for n, b in sizes.items()}
+    
+    polyring = common_ZZ_ring(inp_polys)
 
-    var_names = set()
-    for inp_poly in inp_polys:
-        var_names |= {str(x) for x in inp_poly.variables()}
-    var_names = tuple(sorted(var_names))
     try:
-        var_sizes = [ZZ(sizes[n]) for n in var_names]
+        var_sizes = [ZZ(sizes[n]) for n in polyring._names]
     except KeyError as e:
         raise ValueError(f"Variable {e} not found in bounds")
-
-    polyring, xs = PolynomialRing(
-        ZZ, len(var_names), var_names, order=TermOrder("wdeglex", var_sizes)
-    ).objgens()
+    
+    polyring = polyring.change_ring(order=TermOrder("wdeglex", var_sizes))
 
     char_to_polys = defaultdict(list)
     for inp_poly in inp_polys:
@@ -204,39 +210,41 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         k = ks.pop(char, 1)
         Jps.append(polyring.ideal(polys + [char]) ** k)
         mod_sz += mod_bounds.get(char, lg2(char)) * k
-    J = char_to_polys.get(0, [])
+    J_inf = polyring.ideal(char_to_polys.get(0, []))
+    J = J_inf
     if Jps: J += prod(Jps)
     logger.info(f"{len(J.gens())} generators in ideal, computing Gröbner basis...")
 
-    # TODO: better gröbner libraries?
 
     if ks:
         raise ValueError(f"Unused moduli: {list(ks.keys())}")
 
     Mbig = [
-        prod(x**i for x, i in zip(xs, exp))
+        prod(x**i for x, i in zip(polyring.gens(), exp))
         for exp in find_exps((), mod_sz, var_sizes)
     ]
+
+    # J_inf_lm = polyring.ideal([f.lm() for f in J_inf.groebner_basis()])
+    # Mbig = [m for m in Mbig if m not in J_inf_lm]
 
     G = groebner_ZZ(J)
     MSheur = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(G, Mbig))]
 
+    X = [2**sz for sz in var_sizes]
+
     if graph_search:
         pre_sz = len(MSheur)
         logger.info(f"finding suitable subset using graph search...")
-        while (cand := suitable_subset(MSheur, var_sizes)) is not None:
+        while (cand := suitable_subset(MSheur, X)) is not None:
             MSheur = cand
         logger.info(f'went from {pre_sz} -> {len(MSheur)} monomials')
 
     Ssub = [s for _, s in MSheur]
 
     L, monos = Sequence(Ssub).coefficients_monomials()
-    mono_weights = [
-        sum(a * b for a, b in zip(mono.exponents()[0], var_sizes)) for mono in monos
-    ]
 
-    for i, w in enumerate(mono_weights):
-        L.rescale_col(i, 2**w)
+    for i, mono in enumerate(monos):
+        L.rescale_col(i, mono(X))
 
     if lat_reduce is None:
         if flatter_path is None:
@@ -245,52 +253,77 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         else:
             lat_reduce = flatter
 
-    if L.nrows() < 2:
+    if L.nrows() < 3:
         raise ValueError('lattice got too small, try disabling graph search')
 
     logger.info(f"reducing {L.nrows()}x{L.ncols()} matrix...")
     L = lat_reduce(L.dense_matrix())
 
-    try:
-        poly_end_idx = max(i+1 for i, r in enumerate(L) if r.norm(1) < 2**mod_sz)
-    except ValueError:
-        poly_end_idx = 1
+    start_hint = next((i for i, r in enumerate(L) if r.norm(1) > 2**mod_sz), len(monos))
 
     L = L.change_ring(QQ)
-    for i, w in enumerate(mono_weights):
-        L.rescale_col(i, QQ(2) ** -w)
+    for i, mono in enumerate(monos):
+        L.rescale_col(i, QQ((1, mono(X))))
 
-    out_polys = list(L * monos)
-    out_polys = [f for f in out_polys if not f.is_constant()]
-    while 0 < poly_end_idx <= len(out_polys):
-        sol_polys = out_polys[:poly_end_idx]
-        logger.info(f'solving with the first {poly_end_idx} polynomials...')
-        part_var_names = list(
-            set().union(*({str(x) for x in p.variables()} for p in sol_polys))
-        )
-        part_ring = PolynomialRing(
-            QQ, len(part_var_names), part_var_names, order="degrevlex"
-        )
+    res = list(L.change_ring(ZZ) * monos)
+    if ret_start_hint:
+        return res, start_hint
+    return res
+
+
+def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True, algorithm='groebner'):
+    '''
+    See docstring of `small_polys`
+    '''
+    out_polys, start_hint = small_polys(inp_polys, sizes, ks, mod_bounds, lat_reduce, graph_search, ret_start_hint=True)
+    logger.info('found small polys, solving for roots...')
+
+    if algorithm == 'groebner':
+        return rootfind_groebner(out_polys, start_hint=start_hint)
+    else:
+        raise ValueError(f"Unknown algorithm {algorithm}")
+
+# TODO: add more rootfinding algorithms
+
+def rootfind_groebner(polys, ring, start_hint=None):
+    seen_params = set()
+
+    if start_hint is not None:
+        idx = start_hint
+        while 0 < idx <= len(polys):
+            logger.info(f'trying Gröbner with {idx} first polynomials...')
+            params = tuple(range(idx))
+            if params in seen_params:
+                # looped back to a previous state
+                break
+
+            seen_params.add(params)
+
+            part_ring = common_ZZ_ring(polys[:idx]).change_ring(QQ, order='degrevlex')
+            I = part_ring.ideal([part_ring(repr(p)) for p in polys[:idx]])
+            I = groebner_QQ(I)
+
+            if I.dimension() == 0:
+                return variety_ZZ(I)
+            if I.dimension() == -1: idx -= 1
+            if I.dimension() > 0: idx += 1
+
+    logger.info(f'successively adding more polynomials from start...')
+    sol_polys = []
+    param = ()
+    for i, p in enumerate(polys):
+        param += (i,)
+        # don't repeat something the previous loop above did
+        if param in seen_params: continue
+
+        sol_polys.append(p)
+        part_ring = common_ZZ_ring(sol_polys).change_ring(QQ, order='degrevlex')
         I = part_ring.ideal([part_ring(repr(p)) for p in sol_polys])
         I = groebner_QQ(I)
-        if I.dimension() == 0: break
-        if I.dimension() == -1: poly_end_idx -= 1
-        if I.dimension() > 0: poly_end_idx += 1
-    else:
-        return []
 
-    rem_var_names = set(var_names) - set(part_var_names)
-    if len(rem_var_names) > 0:
-        warn_once(logger,
-            f"Variables {rem_var_names} not recovered, "
-            "try substituting the result back into the original equations"
-        )
-
-    logger.info('0-dimensional ideal found, computing variety...')
-
-    # TODO: try to solve for all variables even if left out
-    # in the final equations (combine with initial equations?)
-    return [
-        KeyConvertingDict(str, {str(k): ZZ(v) for k, v in sol.items()})
-        for sol in variety_QQ(I) if all(sol.is_integer() for sol in sol.values())
-    ]
+        if I.dimension() == 0:
+            return variety_ZZ(I)
+        if I.dimension() == -1:
+            param.pop()
+            sol_polys.pop()
+    return []
