@@ -98,7 +98,7 @@ def find_exps(assignemnt, remaining, weights):
         yield from find_exps(assignemnt + (j,), new_remaining, weights)
 
 
-def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
+def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, graph_search=True):
     '''
     Given a list of polynomials, possible over different rings, finds
     small solutions to the system of equations. The polynomials may be defined
@@ -115,6 +115,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
             modulo (in no. bits)
         lat_reduce: function to reduce the lattice, defaults to flatter if
             installed otherwise fplll's LLL
+        greap_search: Whether to perform the graph search to find dense sublattices
 
     Returns:
         list of solutions, each a dict mapping variable names to their values
@@ -171,9 +172,11 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
     MSbig = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(J, Mbig))]
 
     MSheur = MSbig
-    verbose(f"finding suitable subset...")
-    while (cand := suitable_subset(MSheur, var_sizes)) is not None:
-        MSheur = cand
+
+    if graph_search:
+        verbose(f"finding suitable subset...")
+        while (cand := suitable_subset(MSheur, var_sizes)) is not None:
+            MSheur = cand
 
     Ssub = [s for _, s in MSheur]
 
@@ -191,6 +194,9 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter):
             lat_reduce = LLL
         else:
             lat_reduce = flatter
+
+    if L.nrows() < 2:
+        raise ValueError('Lattice got too small :((')
 
     verbose(f"reducing {L.nrows()}x{L.ncols()} matrix...")
     L = lat_reduce(L.dense_matrix())
