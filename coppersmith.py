@@ -2,22 +2,67 @@ import shutil
 import subprocess
 import re
 
-from sage.all import matrix, ZZ, DiGraph, Infinity, prod, Sequence, PolynomialRing, TermOrder, QQ
 from sage.misc.converting_dict import KeyConvertingDict
-from sage.misc.verbose import verbose
+from sage.all import matrix, ZZ, DiGraph, Infinity, prod, Sequence, PolynomialRing, TermOrder, QQ
 
 from warnings import warn
 from collections import defaultdict
 from subprocess import CalledProcessError
 
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(uptime)f [%(levelname)s]: %(message)s')
+
+old_factory = logging.getLogRecordFactory()
+def record_factory(*args, **kwargs):
+    record = old_factory(*args, **kwargs)
+    record.uptime = record.relativeCreated/1000
+    return record
+logging.setLogRecordFactory(record_factory)
+
 
 flatter_path = shutil.which('flatter')
+
+# test if msolve is installed
+try:
+    QQ['x,y'].ideal([1]).groebner_basis(algorithm='msolve', proof=False)
+    msolve_available = True
+except CalledProcessError:
+    warn('msolve not found by Sage, equation solving will likely be slower')
+    msolve_available = False
 
 
 def flatter(M, flatter_path=flatter_path):
     inp_str = '[' + '\n'.join('[' + ' '.join(map(str, row)) + ']' for row in M) + ']'
     out_str = subprocess.check_output([flatter_path], input=inp_str.encode())
     return matrix(ZZ, M.nrows(), M.ncols(), map(ZZ, re.findall(r'-?\d+', out_str.decode())))
+
+
+def groebner_ZZ(I):
+    # TODO: add magma support
+    return I.groebner_basis()
+
+
+def groebner_QQ(I):
+    '''
+    Return a new ideal with either the Gröbner basis of I
+    as generators or return I with a cached computed Gröbner basis
+    '''
+    if msolve_available:
+        gb = I.groebner_basis(algorithm='msolve', proof=False)
+    else:
+        gb = I.groebner_basis()
+    return I.parent()(gb)
+
+
+def variety_QQ(I):
+    '''
+    Return the variety of I
+    '''
+    if msolve_available:
+        return I.variety(algorithm='msolve', proof=False)
+    return I.variety()
 
 
 def LLL(M, **kwargs):
@@ -32,8 +77,7 @@ def lg2(n):
     return ZZ(abs(n) - 1).nbits()
 
 
-def optimal_shift_polys(J, M):
-    G = J.groebner_basis()
+def optimal_shift_polys(G, M):
     S = []
     for m in M:
         g = min((g for g in G if g.lm().divides(m)), key=lambda g: g.lc(), default=None)
@@ -145,7 +189,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         if R == QQ:
             inp_poly *= inp_poly.denominator()
         char_to_polys[R.characteristic()].append(polyring(repr(inp_poly)))
-    verbose("computing ideal powers...")
+    logger.info("computing ideal powers...")
 
     # TODO: smarter selection of powers
     Jps = []
@@ -158,7 +202,9 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         mod_sz += mod_bounds.get(char, lg2(char)) * k
     J = char_to_polys.get(0, [])
     if Jps: J += prod(Jps)
-    verbose(f"done! {len(J.gens())} generators in ideal")
+    logger.info(f"{len(J.gens())} generators in ideal, computing Gröbner basis...")
+
+    # TODO: better gröbner libraries?
 
     if ks:
         raise ValueError(f"Unused moduli: {list(ks.keys())}")
@@ -168,15 +214,17 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         for exp in find_exps((), mod_sz, var_sizes)
     ]
 
-    verbose(f"computing optimal shift polynomials... (gröbner basis :scream:)")
-    MSbig = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(J, Mbig))]
+    G = groebner_ZZ(J)
+    MSbig = [(m, s) for m, s in zip (Mbig, optimal_shift_polys(G, Mbig))]
 
     MSheur = MSbig
 
     if graph_search:
-        verbose(f"finding suitable subset...")
+        pre_sz = len(MSheur)
+        logger.info(f"finding suitable subset using graph search...")
         while (cand := suitable_subset(MSheur, var_sizes)) is not None:
             MSheur = cand
+        logger.info(f'went from {pre_sz} -> {len(MSheur)} monomials')
 
     Ssub = [s for _, s in MSheur]
 
@@ -198,7 +246,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
     if L.nrows() < 2:
         raise ValueError('lattice got too small, try disabling graph search')
 
-    verbose(f"reducing {L.nrows()}x{L.ncols()} matrix...")
+    logger.info(f"reducing {L.nrows()}x{L.ncols()} matrix...")
     L = lat_reduce(L.dense_matrix())
 
     try:
@@ -211,8 +259,10 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         L.rescale_col(i, QQ(2) ** -w)
 
     out_polys = list(L * monos)
+    out_polys = [f if not f.is_constant() else f.parent()(0) for f in out_polys]
     while 0 < poly_end_idx <= len(out_polys):
         sol_polys = out_polys[:poly_end_idx]
+        logger.info(f'solving with the first {poly_end_idx} polynomials...')
         part_var_names = list(
             set().union(*({str(x) for x in p.variables()} for p in sol_polys))
         )
@@ -220,10 +270,7 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
             QQ, len(part_var_names), part_var_names, order="degrevlex"
         )
         I = part_ring.ideal([part_ring(repr(p)) for p in sol_polys])
-        try:
-            I = part_ring.ideal(I.groebner_basis(algorithm="msolve", proof=False))
-        except CalledProcessError:
-            pass # will be computed by singular in the backend
+        I = groebner_QQ(I)
         if I.dimension() == 0: break
         if I.dimension() == -1: poly_end_idx -= 1
         if I.dimension() > 0: poly_end_idx += 1
@@ -237,9 +284,11 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
             "try substituting the result back into the original equations"
         )
 
+    logger.info('0-dimensional ideal found, computing variety...')
+
     # TODO: try to solve for all variables even if left out
     # in the final equations (combine with initial equations?)
     return [
         KeyConvertingDict(str, {str(k): ZZ(v) for k, v in sol.items()})
-        for sol in I.variety() if all(sol.is_integer() for sol in sol.values())
+        for sol in variety_QQ(I) if all(sol.is_integer() for sol in sol.values())
     ]
