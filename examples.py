@@ -58,6 +58,10 @@ def run_tests():
     # at least they work for this seed
     set_random_seed(0)
 
+    test_partial_factor(lgp=1024, lgX=330, k=1)
+    test_partial_factor(lgp=1024, lgX=460, k=5)
+    test_partial_factor(lgp=1024, lgX=490, k=15)
+
     test_system_univariate(lgX=291, lgp=512, e1=3, e2=5, k1=1, k2=1)
     test_system_univariate(lgX=365, lgp=512, e1=3, e2=5, k1=2, k2=2)
     test_system_univariate(lgX=455, lgp=512, e1=3, e2=5, k1=5, k2=4)
@@ -66,9 +70,6 @@ def run_tests():
     test_mihnp(nsamples=4, lgX=405, lgp=1000, k=2)
     test_mihnp(nsamples=5, lgX=470, lgp=1000, k=3)
 
-    test_partial_factor(lgp=1024, lgX=330, k=1)
-    test_partial_factor(lgp=1024, lgX=460, k=5)
-    test_partial_factor(lgp=1024, lgX=490, k=15)
 
 if __name__ == '__main__':
     run_tests()
