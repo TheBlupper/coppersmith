@@ -156,8 +156,8 @@ def small_roots(inp_polys, sizes, ks=None, mod_bounds=None, lat_reduce=flatter, 
         k = ks.pop(char, 1)
         Jps.append(polyring.ideal(polys + [char]) ** k)
         mod_sz += mod_bounds.get(char, lg2(char)) * k
-    J = prod(Jps)
-    J += char_to_polys.get(0, [])
+    J = char_to_polys.get(0, [])
+    if Jps: J += prod(Jps)
     verbose(f"done! {len(J.gens())} generators in ideal")
 
     if ks:
